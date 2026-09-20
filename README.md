@@ -32,14 +32,14 @@ Open3D is required. A GPU is not required for the three registration methods.
 
 ## Segmentation weights
 
-Weights are **not** stored in this repository. Insert the two public links here after they are uploaded:
+Weights are **not** stored in this repository. Download them from Google Drive:
 
 1. **IOS / DDC tooth segmentation weights**  
-   Download: `<INSERT_IOS_TOOTH_SEG_WEIGHTS_URL>`  
+   Download: https://drive.google.com/drive/folders/17zoALd8rb6BQfa8w8-orsrVzSIM1Xkhq?usp=drive_link  
    Place under: `weights/ios_tooth_seg/`
 
 2. **CT craniofacial segmentation weights** (DentalSegmentator / nnU-Net, labels: maxilla & upper skull, mandible, upper teeth, lower teeth, mandibular canal)  
-   Download: `<INSERT_CT_CRANIOFACIAL_SEG_WEIGHTS_URL>`  
+   Download: https://drive.google.com/drive/folders/1xJ2Upchg1ed8sA6MJvQiaaL485xIaaMu?usp=sharing  
    Place under: `weights/ct_craniofacial_seg/`
 
 These weights are only needed if you start from raw IOS meshes and CT volumes. If `*_DDC_*_teeth` and `ct_seg/hi_*_teeth.stl` already exist, skip this section and go straight to registration.
@@ -158,19 +158,6 @@ T = out["transform"]  # 4x4 numpy array, source -> target
 - Fitness can remain moderate on a 180° arch-symmetric flip. For the perturbation benchmark, also check `gt_rotation_err_deg`.
 
 ---
-
-## Citation
-
-If you use this code, please cite:
-
-```bibtex
-@article{cmfpair,
-  title={CMF-PAIR: A Patient-Level Multimodal Clinical Dataset for Craniofacial Registration, Reconstruction and Treatment Planning},
-  year={2026}
-}
-```
-
-Citation details will be updated upon publication.
 
 ## License
 
