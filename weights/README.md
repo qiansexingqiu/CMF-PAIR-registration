@@ -1,15 +1,15 @@
 # Segmentation weights (not in git)
 
-Download the two archives and unpack them here. Paste the public URLs into the root `README.md` as well.
+Download the two archives and unpack them here.
 
 ## 1. IOS / DDC tooth segmentation
 
-- Download: `<INSERT_IOS_TOOTH_SEG_WEIGHTS_URL>`
+- Download: https://drive.google.com/drive/folders/17zoALd8rb6BQfa8w8-orsrVzSIM1Xkhq?usp=drive_link
 - Unpack to: `weights/ios_tooth_seg/`
 
 ## 2. CT craniofacial segmentation
 
-- Download: `<INSERT_CT_CRANIOFACIAL_SEG_WEIGHTS_URL>`
+- Download: https://drive.google.com/drive/folders/1xJ2Upchg1ed8sA6MJvQiaaL485xIaaMu?usp=sharing
 - Unpack to: `weights/ct_craniofacial_seg/`
 
 Do not commit `*.pt`, `*.pth`, nnU-Net result folders, or other checkpoints.
