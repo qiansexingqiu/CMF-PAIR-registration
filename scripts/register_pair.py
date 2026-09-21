@@ -15,7 +15,7 @@ from cmfpair.registration import METHODS, register_meshes
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Register one IOS/DDC tooth mesh to a CT tooth mesh.")
+    ap = argparse.ArgumentParser(description="Register one dental model (T1/T2) to a CT tooth mesh.")
     ap.add_argument("--source", type=Path, required=True, help="Source mesh (.ply/.obj/.stl).")
     ap.add_argument("--target", type=Path, required=True, help="Target mesh (.ply/.obj/.stl).")
     ap.add_argument("--method", choices=METHODS, default="pca_icp")

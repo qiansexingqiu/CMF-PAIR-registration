@@ -1,4 +1,20 @@
-"""Dataset folder conventions used by CMF-PAIR registration scripts."""
+"""Dataset folder conventions used by CMF-PAIR registration scripts.
+
+Primary layout matches the CMF-PAIR paper / Zenodo release:
+
+    Case1/
+      T1.stl                          # maxillary dental model (ProPlan-exported, CT space)
+      T2.stl                          # mandibular dental model
+      Segmentation_Upper Teeth.stl    # CT maxillary dentition
+      Segmentation_Lower Teeth.stl    # CT mandibular dentition
+
+T1/T2 are the clinically registered dental models exported from ProPlan CMF.
+They already sit in the CT coordinate system and are the pose ground truth
+for the perturbation benchmark (light / medium / heavy only).
+
+Legacy ``PatientDDC_*`` folders with ``*_DDC_*_teeth`` and ``ct_seg/hi_*_teeth.stl``
+are still accepted as a fallback.
+"""
 from __future__ import annotations
 
 import json
@@ -19,22 +35,160 @@ CSV_NAME = {
     "fpfh_ransac_icp": "unified_fitness_fpfh_ransac_icp_delta{delta_tag}.csv",
 }
 
+_CASE_DIR_RE = re.compile(r"^case\d+$", re.I)
+_PATIENT_DIR_RE = re.compile(r"^patient", re.I)
+_SKIP_DIR_NAMES = {
+    ".git",
+    "__pycache__",
+    "weights",
+    *RESULT_SUBDIR.values(),
+    "traditional_single_pca_icp_result",
+    "traditional_pca_icp_result",
+    "traditional_fpfh_ransac_icp_result",
+}
+
+
+def _norm_key(name: str) -> str:
+    text = Path(name).name.lower().replace("&", "and")
+    text = re.sub(r"[_\-\s]+", " ", text).strip()
+    return text
+
+
+def _skip_dir_name(name: str) -> bool:
+    lowered = name.lower()
+    if lowered.startswith("perturb_"):
+        return True
+    return name in _SKIP_DIR_NAMES or lowered in {x.lower() for x in _SKIP_DIR_NAMES}
+
+
+def source_mesh_names(pid: str, jaw: str) -> list[str]:
+    jaw_cap = jaw.capitalize()
+    if jaw == "upper":
+        names = ["T1.stl", "T1.ply", "T1.obj"]
+    else:
+        names = ["T2.stl", "T2.ply", "T2.obj"]
+    names += [
+        f"{pid}_DDC_{jaw_cap}_teeth.ply",
+        f"{pid}_DDC_{jaw_cap}_teeth.obj",
+        f"{pid}_DDC_{jaw_cap}_teeth.stl",
+    ]
+    return names
+
+
+def target_mesh_names(pid: str, jaw: str) -> list[str]:
+    jaw_cap = jaw.capitalize()
+    if jaw == "upper":
+        names = [
+            "Segmentation_Upper Teeth.stl",
+            "Segmentation_Upper_Teeth.stl",
+        ]
+    else:
+        names = [
+            "Segmentation_Lower Teeth.stl",
+            "Segmentation_Lower_Teeth.stl",
+        ]
+    names += [
+        f"ct_seg/hi_{jaw}_teeth.stl",
+        f"hi_{jaw}_teeth.stl",
+        f"{pid}_CT_{jaw_cap}.stl",
+    ]
+    return names
+
+
+def _iter_case_files(case_dir: Path):
+    for path in case_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        rel_parts = path.relative_to(case_dir).parts
+        if any(_skip_dir_name(part) for part in rel_parts[:-1]):
+            continue
+        yield path
+
+
+def find_mesh(case_dir: Path, names: list[str]) -> Path | None:
+    """Locate a mesh by paper filename first, then by normalized basename."""
+    for name in names:
+        path = case_dir / name
+        if path.is_file():
+            return path
+
+    order = {_norm_key(Path(name).name): i for i, name in enumerate(names)}
+    best: Path | None = None
+    best_rank = (10**9, 10**9)
+    for path in _iter_case_files(case_dir):
+        key = _norm_key(path.name)
+        if key not in order:
+            continue
+        rank = (order[key], len(path.relative_to(case_dir).parts))
+        if rank < best_rank:
+            best = path
+            best_rank = rank
+    return best
+
+
+def find_source_mesh(case_dir: Path, jaw: str, pid: str | None = None) -> Path | None:
+    return find_mesh(case_dir, source_mesh_names(pid or case_dir.name, jaw))
+
+
+def find_target_mesh(case_dir: Path, jaw: str, pid: str | None = None) -> Path | None:
+    return find_mesh(case_dir, target_mesh_names(pid or case_dir.name, jaw))
+
+
+def resolve_pair_paths(
+    patient_dir: Path, jaw: str, pid: str | None = None
+) -> tuple[Path, Path] | None:
+    pid = pid or patient_dir.name
+    src = find_source_mesh(patient_dir, jaw, pid)
+    tgt = find_target_mesh(patient_dir, jaw, pid)
+    if src is None or tgt is None:
+        return None
+    return src, tgt
+
+
+def is_case_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    name = path.name
+    if _CASE_DIR_RE.match(name):
+        return True
+    return bool(_PATIENT_DIR_RE.match(name) and re.search(r"\d+", name))
+
 
 def patient_sort_key(path: Path) -> int:
-    m = re.search(r"case(\d+)$", path.name)
-    if m:
-        return int(m.group(1))
-    m = re.search(r"(\d+)$", path.name)
-    return int(m.group(1)) if m else 999999
+    name = path.name
+    match = re.search(r"(?i)case(\d+)", name)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(\d+)$", name)
+    return int(match.group(1)) if match else 999999
+
+
+def _matches_only(path: Path, only: set[str]) -> bool:
+    lowered = {item.lower() for item in only}
+    if path.name in only or path.name.lower() in lowered:
+        return True
+    return str(patient_sort_key(path)) in only
 
 
 def iter_patients(root: Path, only: set[str] | None = None) -> list[Path]:
-    patients = sorted(
-        [p for p in root.iterdir() if p.is_dir() and p.name.startswith("Patient")],
-        key=patient_sort_key,
-    )
+    """Yield Case1..Case100 (paper/Zenodo) or legacy Patient* folders."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+
+    candidates = [p for p in root.iterdir() if is_case_dir(p)]
+    if not candidates:
+        nested: list[Path] = []
+        for child in root.iterdir():
+            if child.is_dir():
+                nested.extend(p for p in child.iterdir() if is_case_dir(p))
+        candidates = nested
+    if not candidates and is_case_dir(root):
+        candidates = [root]
+
+    patients = sorted(candidates, key=patient_sort_key)
     if only:
-        patients = [p for p in patients if p.name in only]
+        patients = [p for p in patients if _matches_only(p, only)]
     return patients
 
 
@@ -47,15 +201,10 @@ def delta_tag(delta: float) -> str:
 def load_pair(patient_dir: Path, pid: str, jaw: str):
     import open3d as o3d
 
-    jaw_cap = jaw.capitalize()
-    src = patient_dir / f"{pid}_DDC_{jaw_cap}_teeth.ply"
-    if not src.is_file():
-        src = patient_dir / f"{pid}_DDC_{jaw_cap}_teeth.obj"
-    tgt = patient_dir / "ct_seg" / f"hi_{jaw}_teeth.stl"
-    if not tgt.is_file():
-        tgt = patient_dir / f"{pid}_CT_{jaw_cap}.stl"
-    if not src.is_file() or not tgt.is_file():
+    resolved = resolve_pair_paths(patient_dir, jaw, pid)
+    if resolved is None:
         return None
+    src, tgt = resolved
     src_mesh = o3d.io.read_triangle_mesh(str(src))
     tgt_mesh = o3d.io.read_triangle_mesh(str(tgt))
     if src_mesh.is_empty() or tgt_mesh.is_empty():
@@ -111,7 +260,10 @@ def write_outputs(
     if save_aligned_source:
         mesh = o3d.io.read_triangle_mesh(str(src_path))
         mesh.transform(T)
-        o3d.io.write_triangle_mesh(str(out_dir / f"{pid}_{method}_aligned_{jaw}_ddc.ply"), mesh)
+        suffix = src_path.suffix.lower() if src_path.suffix else ".ply"
+        o3d.io.write_triangle_mesh(
+            str(out_dir / f"{pid}_{method}_aligned_{jaw}{suffix}"), mesh
+        )
     return tf_path
 
 

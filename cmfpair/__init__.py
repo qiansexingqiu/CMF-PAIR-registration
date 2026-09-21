@@ -7,6 +7,7 @@ Methods
 - ``fpfh_ransac_icp``: FPFH + RANSAC global registration + ICP
 """
 
+from .dataset import iter_patients, load_pair, resolve_pair_paths
 from .registration import (
     METHODS,
     register_meshes,
@@ -17,9 +18,12 @@ from .registration import (
 
 __all__ = [
     "METHODS",
+    "iter_patients",
+    "load_pair",
     "register_meshes",
+    "resolve_pair_paths",
     "run_fpfh_ransac_icp",
     "run_pca_icp",
     "run_single_pca_icp",
 ]
-__version__ = "1.0.0"
+__version__ = "1.1.0"

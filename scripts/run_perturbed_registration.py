@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Perturbed-source registration benchmark for CMF-PAIR."""
+"""Perturbed-source registration benchmark for CMF-PAIR.
+
+T1/T2 are ProPlan-exported dental models already in CT space. A known rigid
+perturbation is applied, then methods register the moved source back to the
+unchanged CT dentition. Ground truth is T_gt = inv(T_pert). There is no
+unperturbed ("none") level.
+"""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +24,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cmfpair.dataset import RESULT_SUBDIR, delta_tag, finite_or_inf, iter_patients, load_pair
+from cmfpair.dataset import (
+    RESULT_SUBDIR,
+    delta_tag,
+    find_source_mesh,
+    find_target_mesh,
+    finite_or_inf,
+    iter_patients,
+    load_pair,
+    patient_sort_key,
+)
 from cmfpair.registration import METHODS, register_meshes
 
 PERTURB_LEVELS = {
@@ -32,17 +47,13 @@ def perturb_dir(patient_dir: Path, level: str) -> Path:
     return patient_dir / f"perturb_{level}"
 
 
-def _case_num(name: str) -> int:
-    import re
-
-    m = re.search(r"case(\d+)$", name) or re.search(r"(\d+)$", name)
-    return int(m.group(1)) if m else 999999
-
-
 def _rng_for(patient_id: str, jaw: str, level: str, base_seed: int) -> np.random.Generator:
+    from pathlib import Path
+
     jaw_code = 1 if jaw == "upper" else 2
     level_code = {"light": 11, "medium": 22, "heavy": 33}[level]
-    return np.random.default_rng(base_seed + _case_num(patient_id) * 1000 + jaw_code + level_code)
+    case_num = patient_sort_key(Path(patient_id))
+    return np.random.default_rng(base_seed + case_num * 1000 + jaw_code + level_code)
 
 
 def _rotation_matrix_axis_angle(axis: np.ndarray, angle_rad: float) -> np.ndarray:
@@ -95,20 +106,19 @@ def pose_errors(T_est: np.ndarray, T_gt: np.ndarray) -> tuple[float, float]:
     return rot_deg, trans_mm
 
 
-def _perturbed_source_paths(pert_dir: Path, pid: str, jaw: str) -> tuple[Path, Path]:
-    jaw_cap = jaw.capitalize()
-    return (
-        pert_dir / f"{pid}_DDC_{jaw_cap}_teeth.ply",
-        pert_dir / f"{pid}_DDC_{jaw_cap}_teeth.obj",
-    )
+def _perturbed_source_path(pert_dir: Path, original_src: Path) -> Path:
+    """Keep the Zenodo filename (T1.stl / T2.stl) inside perturb_{level}/."""
+    return pert_dir / original_src.name
 
 
-def _write_perturbed_mesh(src_mesh, dest_ply: Path, dest_obj: Path) -> None:
+def _write_perturbed_mesh(src_mesh, dest: Path) -> None:
     import open3d as o3d
 
-    dest_ply.parent.mkdir(parents=True, exist_ok=True)
-    o3d.io.write_triangle_mesh(str(dest_ply), src_mesh, write_vertex_colors=True)
-    o3d.io.write_triangle_mesh(str(dest_obj), src_mesh)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    kwargs = {}
+    if dest.suffix.lower() in {".ply", ".obj"}:
+        kwargs["write_vertex_colors"] = True
+    o3d.io.write_triangle_mesh(str(dest), src_mesh, **kwargs)
 
 
 def parse_jaws(value: str) -> tuple[str, ...]:
@@ -177,12 +187,19 @@ def cmd_prepare(args) -> int:
                 T_gt = np.linalg.inv(T_pert)
                 src_pert = copy.deepcopy(src_mesh)
                 src_pert.transform(T_pert)
-                out_ply, out_obj = _perturbed_source_paths(pert, pid, jaw)
-                _write_perturbed_mesh(src_pert, out_ply, out_obj)
+                out_src = _perturbed_source_path(pert, orig_src_path)
+                _write_perturbed_mesh(src_pert, out_src)
                 tf_path = pert / f"perturb_transform_{jaw}.json"
                 tf_path.write_text(
                     json.dumps(
-                        {"patient": pid, "jaw": jaw, "T_pert": T_pert.tolist(), "T_gt": T_gt.tolist(), **pmeta},
+                        {
+                            "patient": pid,
+                            "jaw": jaw,
+                            "T_pert": T_pert.tolist(),
+                            "T_gt": T_gt.tolist(),
+                            "ground_truth": "ProPlan-exported T1/T2 pose (identity in CT space before perturbation)",
+                            **pmeta,
+                        },
                         indent=2,
                     ),
                     encoding="utf-8",
@@ -191,7 +208,7 @@ def cmd_prepare(args) -> int:
                 c1 = float(np.linalg.norm(np.asarray(src_pert.vertices).mean(0) - np.asarray(tgt_mesh.vertices).mean(0)))
                 manifest["jaws"][jaw] = {
                     "original_source": str(orig_src_path.relative_to(root)),
-                    "perturbed_source_ply": str(out_ply.relative_to(root)),
+                    "perturbed_source": str(out_src.relative_to(root)),
                     "target": str(tgt_path.relative_to(root)),
                     "center_dist_before_mm": c0,
                     "center_dist_after_mm": c1,
@@ -211,22 +228,18 @@ def _load_perturbed_pair(patient_dir: Path, pid: str, jaw: str, level: str):
     import open3d as o3d
 
     pert = perturb_dir(patient_dir, level)
-    ply_path, obj_path = _perturbed_source_paths(pert, pid, jaw)
-    src = src_mesh = None
-    for path in (ply_path, obj_path):
-        if path.is_file():
-            mesh = o3d.io.read_triangle_mesh(str(path))
-            if not mesh.is_empty():
-                src, src_mesh = path, mesh
-                break
-    if src is None:
+    src = find_source_mesh(pert, jaw, pid)
+    src_mesh = None
+    if src is not None:
+        mesh = o3d.io.read_triangle_mesh(str(src))
+        if not mesh.is_empty():
+            src_mesh = mesh
+    if src is None or src_mesh is None:
         return None
-    jaw_cap = jaw.capitalize()
-    tgt = patient_dir / "ct_seg" / f"hi_{jaw}_teeth.stl"
-    if not tgt.is_file():
-        tgt = patient_dir / f"{pid}_CT_{jaw_cap}.stl"
+
+    tgt = find_target_mesh(patient_dir, jaw, pid)
     tf_path = pert / f"perturb_transform_{jaw}.json"
-    if not tgt.is_file() or not tf_path.is_file():
+    if tgt is None or not tf_path.is_file():
         return None
     tgt_mesh = o3d.io.read_triangle_mesh(str(tgt))
     if tgt_mesh.is_empty():
@@ -354,7 +367,9 @@ def cmd_register(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Perturbed IOS/DDC registration benchmark.")
+    ap = argparse.ArgumentParser(
+        description="Perturbed T1/T2 registration benchmark (ProPlan-exported pose as GT)."
+    )
     sub = ap.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:

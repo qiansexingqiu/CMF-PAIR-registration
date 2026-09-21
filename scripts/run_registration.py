@@ -147,7 +147,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Run CMF-PAIR registration methods on Patient* folders.")
     ap.add_argument("-d", "--data-dir", type=Path, required=True, help="Root containing Patient* folders.")
     ap.add_argument("--method", choices=("all",) + METHODS, default="all")
-    ap.add_argument("--patients", type=str, default=None, help="Comma-separated patient folder names.")
+    ap.add_argument("--patients", type=str, default=None, help="Comma-separated case names, e.g. Case1,Case2.")
     ap.add_argument("--jaws", type=parse_jaws, default=("upper", "lower"))
     ap.add_argument("--delta", type=float, default=1.0, help="Unified evaluation correspondence distance (mm).")
     ap.add_argument("--voxel-mm", type=float, default=0.8)

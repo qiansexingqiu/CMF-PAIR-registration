@@ -10,7 +10,7 @@ This repository releases the three geometry-based jaw-level methods used in the 
 | Multi-hypothesis PCA-ICP | `pca_icp` | Four proper PCA sign hypotheses + ICP, pick best |
 | FPFH RANSAC ICP | `fpfh_ransac_icp` | FPFH + RANSAC global registration + ICP |
 
-All methods estimate a rigid transform **T** from the IOS / DDC tooth mesh to the CT tooth mesh (`T @ source ≈ target`). Reported fitness / inlier RMSE use Open3D `evaluate_registration` on **full-resolution vertices** at correspondence distance **δ = 1.0 mm**.
+All methods estimate a rigid transform **T** from the optical dental model to the CT dentition (`T @ source ≈ target`). Reported fitness / inlier RMSE use Open3D `evaluate_registration` on **full-resolution vertices** at correspondence distance **δ = 1.0 mm**.
 
 Segmentation networks are **not** required to run these scripts if tooth meshes are already available. Pretrained segmentation weights are hosted separately (see below).
 
@@ -42,25 +42,35 @@ Weights are **not** stored in this repository. Download them from Google Drive:
    Download: https://drive.google.com/drive/folders/1xJ2Upchg1ed8sA6MJvQiaaL485xIaaMu?usp=sharing  
    Place under: `weights/ct_craniofacial_seg/`
 
-These weights are only needed if you start from raw IOS meshes and CT volumes. If `*_DDC_*_teeth` and `ct_seg/hi_*_teeth.stl` already exist, skip this section and go straight to registration.
+These weights are only needed if you start from raw optical scans and CT volumes. If the released Zenodo meshes are already present (`T1.stl` / `T2.stl` and `Segmentation_* Teeth.stl`), skip this section and go straight to registration.
 
 ---
 
 ## Data layout
 
-Each patient folder should look like:
+Scripts read the **CMF-PAIR Zenodo / paper folder layout** (Fig. 5 in the manuscript):
 
 ```text
 <data_root>/
-  PatientDDC_case001/
-    PatientDDC_case001_DDC_Upper_teeth.ply   # or .obj
-    PatientDDC_case001_DDC_Lower_teeth.ply
-    ct_seg/
-      hi_upper_teeth.stl
-      hi_lower_teeth.stl
+  Case1/
+    T1.stl                          # maxillary dental model
+    T2.stl                          # mandibular dental model
+    Segmentation_Upper Teeth.stl    # CT maxillary dentition
+    Segmentation_Lower Teeth.stl    # CT mandibular dentition
+    ct.nii.gz                       # not used by these scripts
+  Case2/
+    ...
+  Case100/
+    ...
 ```
 
-Fallback CT names `Patient*_CT_Upper.stl` / `Patient*_CT_Lower.stl` are also accepted.
+`T1.stl` / `T2.stl` are the dental models **exported after ProPlan CMF registration**, already in the CT coordinate system. That pose is the ground truth for the perturbation benchmark.
+
+Files may sit in the case root or in a subfolder such as `Segmentations/`. Names with spaces or underscores are both accepted (`Segmentation_Upper Teeth.stl` / `Segmentation_Upper_Teeth.stl`).
+
+`--patients Case1,Case2` or `--patients 1,2` selects cases. If `-d` points at a single `Case*` folder, that case is used.
+
+Legacy `PatientDDC_*` folders with `*_DDC_*_teeth.ply` and `ct_seg/hi_*_teeth.stl` still work.
 
 ---
 
@@ -81,7 +91,7 @@ One method, selected patients:
 python scripts/run_registration.py \
   -d /path/to/data_root \
   --method pca_icp \
-  --patients PatientDDC_case001,PatientDDC_case002 \
+  --patients Case1,Case2 \
   --jaws upper,lower \
   --delta 1.0
 ```
@@ -90,8 +100,8 @@ Single mesh pair:
 
 ```bash
 python scripts/register_pair.py \
-  --source /path/to/ddc_upper_teeth.ply \
-  --target /path/to/hi_upper_teeth.stl \
+  --source /path/to/T1.stl \
+  --target "/path/to/Segmentation_Upper Teeth.stl" \
   --method pca_icp \
   --out transform.json \
   --save-aligned aligned_source.ply
@@ -102,7 +112,7 @@ Default protocol: voxel **0.8 mm**, coarse ICP **5.0 mm**, fine ICP **1.0 mm**, 
 Outputs per patient / method:
 
 ```text
-Patient*/traditional_pca_icp_result/temp_ddc_to_ct_transform_{upper|lower}.json
+Case*/traditional_pca_icp_result/temp_ddc_to_ct_transform_{upper|lower}.json
 <data_root>/unified_fitness_{method}_delta1.csv
 ```
 
@@ -112,7 +122,7 @@ CSV `fitness` / `inlier_rmse` are the unified full-vertex metrics. Downsampled I
 
 ## Perturbation benchmark
 
-Source meshes are first moved by a known rigid perturbation, then registered back to the unchanged CT target. Ground-truth recovery is `T_gt = inv(T_pert)`. Seed is **42**.
+`T1.stl` / `T2.stl` are first displaced by a known rigid perturbation, then registered back to the unchanged CT dentition (`Segmentation_* Teeth.stl`). Because those dental models were exported from ProPlan already in CT space, ground-truth recovery is `T_gt = inv(T_pert)`. Seed is **42**. There is **no unperturbed (`none`) level**.
 
 | Level | Translation | Rotation |
 |---|---|---|
@@ -141,8 +151,8 @@ Or both steps: `python scripts/run_perturbed_registration.py all -d /path/to/dat
 import open3d as o3d
 from cmfpair import register_meshes
 
-src = o3d.io.read_triangle_mesh("ddc_upper_teeth.ply")
-tgt = o3d.io.read_triangle_mesh("hi_upper_teeth.stl")
+src = o3d.io.read_triangle_mesh("T1.stl")
+tgt = o3d.io.read_triangle_mesh("Segmentation_Upper Teeth.stl")
 out = register_meshes(src, tgt, method="pca_icp")
 print(out["fitness"], out["inlier_rmse"])
 T = out["transform"]  # 4x4 numpy array, source -> target
