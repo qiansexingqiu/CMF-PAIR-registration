@@ -122,7 +122,7 @@ CSV `fitness` / `inlier_rmse` are the unified full-vertex metrics. Downsampled I
 
 ## Perturbation benchmark
 
-`T1.stl` / `T2.stl` are first displaced by a known rigid perturbation, then registered back to the unchanged CT dentition (`Segmentation_* Teeth.stl`). Because those dental models were exported from ProPlan already in CT space, ground-truth recovery is `T_gt = inv(T_pert)`. Seed is **42**. There is **no unperturbed (`none`) level**.
+`T1.stl` / `T2.stl` are first displaced by a known rigid perturbation, then registered back to the unchanged CT dentition (`Segmentation_* Teeth.stl`). Because those dental models were exported from ProPlan already in CT space, ground-truth recovery is `T_gt = inv(T_pert)`.
 
 | Level | Translation | Rotation |
 |---|---|---|
